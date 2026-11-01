@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Added by newdarwindev, 2026-11-01. See demo/NOTICE.md for upstream attribution.
+"""Explicit foreground native or Homarr display. No service installation."""
+
+import argparse
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+from urllib.parse import unquote, urlsplit
+
+
+class DisplayError(Exception):
+    """A deliberately value-free user-facing error."""
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        # argparse's default includes rejected values, which could contain secrets.
+        self.exit(2, "Invalid arguments. Use --help for usage.\n")
+
+
+def board_url(value):
+    """Accept a top-level HTTP(S) board URL, never inline auth or token URLs."""
+    if not value or len(value) > 4096 or re.search(r"[\s\\\x00-\x1f\x7f]", value):
+        raise DisplayError("Board URL must be an HTTP(S) URL without whitespace.")
+    try:
+        parsed = urlsplit(value)
+        if (parsed.scheme not in ("http", "https") or not parsed.hostname
+                or not parsed.netloc or parsed.username is not None
+                or parsed.password is not None or "@" in parsed.netloc
+                or parsed.query or parsed.fragment or "?" in value or "#" in value
+                or any(c in unquote(value) for c in ("\r", "\n", "\x00"))):
+            raise ValueError
+        if parsed.port is not None and not 1 <= parsed.port <= 65535:
+            raise ValueError
+        # Avoid browser/parser disagreements over encoded authorities.
+        if "%" in parsed.netloc or not re.fullmatch(r"[A-Za-z0-9.\-:\[\]]+", parsed.netloc):
+            raise ValueError
+    except ValueError:
+        raise DisplayError("Board URL must be HTTP(S), with no credentials, query or fragment.") from None
+    return value
+
+
+def browser_path(explicit):
+    candidates = [explicit] if explicit else [
+        "chromium", "chromium-browser", "google-chrome", "google-chrome-stable",
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    ]
+    for candidate in candidates:
+        found = shutil.which(candidate)
+        if found:
+            return found
+    raise DisplayError("Chromium/Chrome executable not found. Set --browser to its executable path.")
+
+
+def browser_command(executable, url, profile):
+    return [executable, "--kiosk", "--no-first-run", "--no-default-browser-check",
+            "--disable-background-mode", f"--user-data-dir={profile}", url]
+
+
+def stop_group(child):
+    """Stop only this launch's process group, including browser subprocesses."""
+    try:
+        os.killpg(child.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        child.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        pass
+    # A parent can exit before its descendants: do not leave that group running.
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    child.wait()
+
+
+def run_homarr(url, executable):
+    if os.name != "posix":
+        raise DisplayError("This demo supports Linux and macOS foreground lifecycle only.")
+    old_handlers = {}
+    child = None
+    requested_stop = None
+
+    def stop(signum, frame):
+        nonlocal requested_stop
+        requested_stop = signum
+
+    with tempfile.TemporaryDirectory(prefix="mctl-homarr-") as profile:
+        try:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                old_handlers[sig] = signal.signal(sig, stop)
+            print("Homarr mode: separate Chromium/Chrome fullscreen window. Close it or press Ctrl-C to stop.", flush=True)
+            print("Demo changes: newdarwindev, 2026-11-01; GPL-3.0-or-later; NO WARRANTY. See LICENSE and demo/NOTICE.md.", flush=True)
+            child = subprocess.Popen(browser_command(executable, url, profile),
+                                     start_new_session=True, stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            while requested_stop is None:
+                try:
+                    result = child.wait(timeout=0.1)
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            if requested_stop is not None:
+                return 128 + requested_stop
+            if result:
+                raise DisplayError("Browser exited unsuccessfully. Check browser/display availability.")
+            return 0
+        except OSError:
+            raise DisplayError("Could not start the browser. Check executable permissions and display availability.") from None
+        finally:
+            # Ignore repeat stop signals while reaping our children and deleting profile.
+            for sig in old_handlers:
+                signal.signal(sig, signal.SIG_IGN)
+            try:
+                if child is not None:
+                    stop_group(child)
+            finally:
+                for sig, handler in old_handlers.items():
+                    signal.signal(sig, handler)
+
+
+def main(argv=None):
+    parser = Parser(description="mctl demo: explicit foreground native or fullscreen Homarr browser mode.")
+    commands = parser.add_subparsers(dest="mode", required=True, parser_class=Parser)
+    homarr = commands.add_parser("homarr", help="Open a configured board URL in a separate fullscreen browser.")
+    homarr.add_argument("--url", help="HTTP(S) board URL; alternatively HOMARR_BOARD_URL. No inline credentials or tokens.")
+    homarr.add_argument("--browser", help="Chromium/Chrome executable path (one file, no additional arguments).")
+    native = commands.add_parser("native", help="Run the unchanged upstream mctl binary.")
+    native.add_argument("--binary", default="mctl", help="Built upstream executable path (default: mctl on PATH).")
+    native.add_argument("args", nargs=argparse.REMAINDER)
+    args = parser.parse_args(argv)
+    try:
+        if args.mode == "homarr":
+            url = board_url(args.url or os.environ.get("HOMARR_BOARD_URL"))
+            return run_homarr(url, browser_path(args.browser))
+        binary = shutil.which(args.binary)
+        if not binary:
+            raise DisplayError("Native mctl binary not found. Build it explicitly and set --binary.")
+        forwarded = args.args[1:] if args.args[:1] == ["--"] else args.args
+        os.execv(binary, [binary, *forwarded])
+    except (DisplayError, OSError) as error:
+        # OSError can contain private executable paths; never print it verbatim.
+        print(str(error) if isinstance(error, DisplayError) else "Could not start native mctl.", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

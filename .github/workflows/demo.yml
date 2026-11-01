@@ -1,0 +1,22 @@
+name: Homarr demo Docker checks
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: demo-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build ephemeral test image
+        run: docker build -f demo/docker/Dockerfile -t mctl-homarr-tests .
+      - name: Run isolated synthetic tests
+        run: docker run --rm --init --network none --shm-size=256m mctl-homarr-tests
