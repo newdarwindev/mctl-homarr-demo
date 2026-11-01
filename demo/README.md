@@ -56,10 +56,21 @@ docker run --rm --init --network none --shm-size=256m mctl-homarr-tests
 
 Tests cover URL rejection/redaction, argument boundaries, missing/non-executable browsers, native flag
 dispatch, foreground waiting, normal close, SIGINT/SIGTERM, descendant cleanup, browser failure and
-temporary-profile removal. A real Chromium kiosk under Xvfb loads the synthetic board and checks its
-window geometry. The container runs as an unprivileged user with Chromium's sandbox enabled. No host
+temporary-profile removal. The optional real Chromium/Xvfb test loads the synthetic board and checks
+window geometry. It is explicitly skipped by default: this environment's Docker runtime denies the
+PID/network namespaces Chromium's sandbox requires (`Failed to move to new namespace: Operation not
+permitted`), even with Debian's standard `chromium-sandbox` package installed. Browser protections and
+Docker isolation are not weakened to make it pass. On a sandbox-capable Docker runtime, opt in with:
+
+```sh
+docker run --rm --init --network none --shm-size=256m -e MCTL_REAL_BROWSER=1 mctl-homarr-tests
+```
+
+The container runs as an unprivileged user with Chromium's sandbox enabled. No host
 display, Docker socket, personal directories or credentials are mounted.
 
-Native Rust/GPU rendering, real monitors/macOS Chrome and actual private Homarr URL/auth are **unrun**.
+Real Chromium fullscreen geometry, native Rust/GPU rendering, real monitors/macOS Chrome and actual
+private Homarr URL/auth are **unrun** in this environment. The default suite reports the real-browser
+check as skipped, not passed.
 The CI workflow only builds and runs this ephemeral test container. Upstream Rust source is unchanged;
 its original build/test instructions remain below the demo introduction in the root README.
