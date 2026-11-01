@@ -1,0 +1,5 @@
+.git
+target
+dist
+__pycache__
+*.patch
