@@ -1,4 +1,20 @@
-# mctl
+# mctl-homarr-demo
+
+**Isolated demo fork, modified by newdarwindev on 2026-11-01.** Based on
+[LiamDroog/mctl](https://github.com/LiamDroog/mctl), GPL-3.0-or-later, with attribution and license preserved.
+Adds an explicit **foreground fullscreen Homarr browser mode** through `scripts/mctl-display`.
+This is a separate Chromium/Chrome window, not an embedded native dashboard or a change to the existing
+native `--fullscreen` flag. See [demo setup, stop controls and Docker verification](demo/README.md)
+and [modification notice](demo/NOTICE.md). Native Rust mode remains unchanged. No deployment or private data.
+
+```sh
+python3 scripts/mctl-display homarr --url https://homarr.example/boards/your-board
+```
+
+The following is the preserved upstream README. Its bootstrap/install instructions are **not** required
+for this demo launcher; they install system packages and personal files, so this demo does not run them.
+
+# mctl (upstream documentation)
 
 mctl is a spacecraft display written in Rust. It follows the ISS, the Crew and Cargo Dragons that visit it,
 Hubble, JWST and Roman, and tries to look like a retro flight control room monitor: a 3D orbit map, ground track, sky plot,
